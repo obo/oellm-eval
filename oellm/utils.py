@@ -25,6 +25,62 @@ def get_console() -> Console:
     return _RICH_CONSOLE
 
 
+def oellm_tasks_path() -> Path:
+    """Return the path to the ``tasks`` directory shipped by ``oellm-tasks``.
+
+    The ``oellm-tasks`` package bundles the OpenEuroLLM evaluation task
+    definitions under an importable ``oellm_tasks`` package. This resolves the
+    on-disk location of that ``tasks`` directory regardless of how the package
+    was installed.
+    """
+    from oellm_tasks import tasks_path
+
+    return Path(str(tasks_path()))
+
+
+def build_merged_include_path(
+    dest: Path,
+    sources: Iterable[Path],
+) -> Path:
+    """Create ``dest`` populated with symlinks to the contents of ``sources``.
+
+    ``lm_eval`` accepts a single ``--include_path`` directory, so to expose
+    several task trees at once we merge them into one directory by symlinking
+    each top-level entry of every source into ``dest``. Symlinks are cheap and
+    avoid duplicating data; if symlinking is unsupported we fall back to copying.
+
+    Entries from earlier ``sources`` take precedence on name collisions.
+    """
+    import shutil
+
+    dest = Path(dest)
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+
+    for source in sources:
+        source = Path(source)
+        if not source.is_dir():
+            logging.warning(
+                "Skipping include source %s: not a directory", source
+            )
+            continue
+        for entry in sorted(source.iterdir()):
+            target = dest / entry.name
+            if target.exists() or target.is_symlink():
+                # First source wins; do not overwrite.
+                continue
+            try:
+                target.symlink_to(entry, target_is_directory=entry.is_dir())
+            except OSError:
+                if entry.is_dir():
+                    shutil.copytree(entry, target)
+                else:
+                    shutil.copy2(entry, target)
+
+    return dest
+
+
 def _ensure_runtime_environment(
     use_venv: bool, container_image: str | None, venv_path: str | None
 ) -> None:

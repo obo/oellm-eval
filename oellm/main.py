@@ -29,7 +29,9 @@ from oellm.utils import (
     _pre_download_datasets_from_specs,
     _process_model_paths,
     _setup_logging,
+    build_merged_include_path,
     capture_third_party_output_from_kwarg,
+    oellm_tasks_path,
 )
 
 
@@ -157,9 +159,10 @@ def schedule_evals(
         venv_path: Path to a Python virtual environment. If provided, evaluations run directly using
             this venv instead of inside a Singularity/Apptainer container.
         lm_eval_include_path: Path to a directory containing custom lm_eval task YAML definitions.
-            Passed as --include_path to lm_eval. Defaults to the bundled custom_lm_eval_tasks
-            directory shipped with the package, which overrides broken upstream tasks
-            (e.g. mgsm_native_cot_fr/de/es). Override to point at additional task YAMLs.
+            Passed as --include_path to lm_eval. If omitted, a merged directory is built from the
+            bundled custom_lm_eval_tasks (which overrides broken upstream tasks, e.g.
+            mgsm_native_cot_fr/de/es) and the tasks shipped by the oellm-tasks package. Override to
+            point at a single directory of additional task YAMLs instead.
         local: If True, run evaluations directly on the local machine using bash instead of
             submitting to SLURM. Requires --venv_path. Skips cluster environment detection and
             runs all evaluations sequentially in a single process.
@@ -426,6 +429,32 @@ def schedule_evals(
     logging.info(f"   Time limit with safety margin: {time_limit}")
     logging.info(f"   Requested host memory: {slurm_mem}")
 
+    # Resolve the lm_eval --include_path. When the user supplies an explicit
+    # path we honour it verbatim. Otherwise we merge the task YAMLs bundled with
+    # oellm-eval (custom_lm_eval_tasks) and those shipped by the oellm-tasks
+    # package into a single directory, since lm_eval only accepts one
+    # --include_path.
+    if lm_eval_include_path:
+        resolved_include_path = lm_eval_include_path
+    else:
+        include_sources = [Path(str(files("oellm.resources") / "custom_lm_eval_tasks"))]
+        try:
+            include_sources.append(oellm_tasks_path())
+        except ModuleNotFoundError:
+            logging.warning(
+                "oellm-tasks is not installed; only the bundled "
+                "custom_lm_eval_tasks will be available to lm_eval."
+            )
+        merged_include = build_merged_include_path(
+            evals_dir / "lm_eval_include", include_sources
+        )
+        resolved_include_path = str(merged_include)
+        logging.info(
+            "   lm_eval include_path (merged from %d sources): %s",
+            len(include_sources),
+            resolved_include_path,
+        )
+
     sbatch_script = sbatch_template.format(
         csv_path=csv_path,
         max_array_len=max_array_len,
@@ -438,8 +467,7 @@ def schedule_evals(
         slurm_mem=slurm_mem,
         limit=limit if limit else "",  # Sample limit for quick testing
         venv_path=venv_path or "",
-        lm_eval_include_path=lm_eval_include_path
-        or str(files("oellm.resources") / "custom_lm_eval_tasks"),
+        lm_eval_include_path=resolved_include_path,
         hf_hub_offline=_resolve_hf_hub_offline(local),
         additional_model_args=_resolve_additional_model_args(local),  # Batch size
         evalchemy_dir=os.environ.get("EVALCHEMY_DIR", "/opt/evalchemy"),

@@ -11,6 +11,7 @@ dependencies = [
     "rich",
     "huggingface_hub",
     "pyyaml",
+    "oellm-tasks",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +20,19 @@ dev = [
     "pytest-timeout>=2.3.1",
     "pre-commit",
 ]
+
+[tool.uv.sources]
+# By default, install oellm-tasks from its git repository (it is not on PyPI).
+# For local development, the editable sibling checkout under ../oellm-tasks is
+# used instead when installing with the "dev" dependency group
+# (e.g. `uv sync --group dev`).
+oellm-tasks = [
+    { path = "../oellm-tasks", editable = true, group = "dev" },
+    { git = "https://github.com/OpenEuroLLM/oellm-tasks.git" },
+]
+
+[dependency-groups]
+dev = ["oellm-tasks"]
 
 [project.scripts]
 oellm-eval = "oellm.main:main"
